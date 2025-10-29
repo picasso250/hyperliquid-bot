@@ -10,7 +10,7 @@ def main():
     COIN = "BTC"
     LEVERAGE = 5
     USD_AMOUNT = 10.0  # 我们希望挂单的名义价值
-    SAFE_BUY_PRICE = 10000.0  # 一个远低于当前市价的安全价格，确保不会成交
+    SAFE_BUY_PRICE = 111000.0  # 一个远低于当前市价的安全价格，确保不会成交
     IS_BUY = True  # True = 买入开多, False = 卖出开空
 
     print("--- Hyperliquid主网安全测试脚本 ---")
