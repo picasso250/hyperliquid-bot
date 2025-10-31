@@ -8,7 +8,9 @@ from hyperliquid.utils import constants
 TARGET_USER_ADDRESS = "0xc20ac4dc4188660cbf555448af52694ca62b0734" # 您要跟单的目标地址 (DS)
 
 # 我方仓位名义价值将是目标名义价值的该比例。例如 0.1 表示跟单目标 10% 的仓位规模
-COPY_NOTIONAL_RATIO = 0.1 
+# 基于目标最小仓位 (XRP, $8,866) 和我方最小开仓名义价值 ($10) 计算：
+# 10 / 8866 ≈ 0.001128。为增加价格波动和滑点的缓冲，设定为 0.0012
+COPY_NOTIONAL_RATIO = 0.0012
 
 # 仓位 SZI 大小同步的容忍度。如果我方 SZI 与目标 SZI 的比例差距超过此值，则平仓重开。
 # 设置为 0.05 (5%) 可以减少因微小滑点或网络延迟造成的频繁平仓，从而节省手续费。
@@ -58,13 +60,17 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
     target_direction_is_buy = float(target_position["szi"]) > 0
     target_leverage = int(target_position["leverage"]["value"])
     target_szi_abs = abs(float(target_position["szi"]))
+    target_notional_value = target_szi_abs * mid_price
     
     # 计算我方应开仓的规模 (SZI)
     my_target_szi_abs = target_szi_abs * COPY_NOTIONAL_RATIO
+    my_target_notional_value = my_target_szi_abs * mid_price
     
-    # 容错：如果目标仓位过小，导致我方开仓规模低于精度要求，则跳过
-    if my_target_szi_abs < 1e-5: # 假设最小可开仓位（SZI）为 0.00001
-        print(f"⚠️ 目标 {coin} 仓位过小，按比例跟单规模 {my_target_szi_abs} 低于最小精度，跳过跟单。")
+    # 容错：如果目标仓位过小，导致我方开仓规模低于最小名义价值，则跳过
+    # 假设最小开仓名义价值为 $10
+    MIN_NOTIONAL_VALUE = 10 
+    if my_target_notional_value < MIN_NOTIONAL_VALUE:
+        print(f"⚠️ 目标 {coin} 仓位按比例换算后价值 ${my_target_notional_value:,.2f}，低于最小开仓要求 ${MIN_NOTIONAL_VALUE}，跳过跟单。")
         # 确保我方没有残留仓位
         if my_position:
             print(f"❗️ 目标仓位过小无法跟单，但我仍持有 {coin} 仓位。执行平仓！")
@@ -75,7 +81,7 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
     # --- 2a. 我方未持仓 -> 执行开仓 ---
     if my_position is None:
         print(f"✅ 发现目标持有 {coin} {'多单' if target_direction_is_buy else '空单'} ({target_leverage}x)。")
-        print(f"执行等比例跟单，目标规模: {target_szi_abs:.5f} SZI, 我方规模: {my_target_szi_abs:.5f} SZI")
+        print(f"执行等比例跟单，目标价值: ${target_notional_value:,.2f}, 我方价值: ${my_target_notional_value:,.2f}")
 
         try:
             # 1. 设置与目标一致的杠杆
@@ -101,8 +107,7 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
             if szi_diff <= szi_tolerance:
                 # ✅ 仓位大小也一致 -> 监控中
                 my_position_value = my_szi_abs * mid_price
-                target_position_value = target_szi_abs * mid_price
-                print(f"🟢 {coin} 持仓正常，与目标 ({target_leverage}x, 价值${target_position_value:,.2f}) 一致。")
+                print(f"🟢 {coin} 持仓正常，与目标 ({target_leverage}x, 价值${target_notional_value:,.2f}) 一致。")
                 print(f"   我方仓位价值: ${my_position_value:,.2f}。SZI 差异 ({szi_diff:.5f}) 在容忍范围 ({szi_tolerance:.5f}) 内。")
             else:
                 # ❌ 仓位大小不匹配 -> 先平仓，下一轮再重开
