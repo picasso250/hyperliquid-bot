@@ -29,7 +29,7 @@ from hyperliquid.utils import constants
 # --- 核心配置参数 ---
 
 # ✨ 安全开关: 检查无误后，请手动改为 False 以启动实盘交易。
-DRY_RUN = False
+DRY_RUN = True
 
 TARGET_USER_ADDRESS = "0xc20ac4dc4188660cbf555448af52694ca62b0734" # 您要跟单的目标地址 (DS)
 
