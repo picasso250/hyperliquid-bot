@@ -6,8 +6,8 @@ from hyperliquid.utils import constants
 
 # --- 核心配置参数 ---
 
-# ✨ 安全开关: 设置为 True 时，只打印计划操作，不执行真实交易。检查无误后，请手动改为 False。
-DRY_RUN = True
+# ✨ 安全开关: 检查无误后，请手动改为 False 以启动实盘交易。
+DRY_RUN = False
 
 TARGET_USER_ADDRESS = "0xc20ac4dc4188660cbf555448af52694ca62b0734" # 您要跟单的目标地址 (DS)
 
@@ -94,7 +94,7 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
     if my_position is None:
         print(f"✅ 发现目标持有 {coin} {'多单' if target_direction_is_buy else '空单'} ({target_leverage}x)。")
         print(f"   目标价值: ${target_notional_value:,.2f}, 我方应开价值: ${my_target_notional_value:,.2f}")
-        print(f"   计算SZI: {my_target_szi_abs:.8f} -> 四舍五入到 {sz_decimals} 位小数 -> {rounded_my_target_szi_abs}")
+        print(f"   计算SZI: {my_target_szi_abs:.8f} -> 根据精度({sz_decimals}位小数)修正为 -> {rounded_my_target_szi_abs}")
         
         try:
             leverage_msg = f"更新 {coin} 杠杆为 {target_leverage}x"
@@ -141,39 +141,49 @@ def main():
     print(f"同步容忍度: {SZI_TOLERANCE_RATIO*100}%")
     print("-------------------------------------------------------")
     
-    print("正在获取交易所元数据 (用于精度计算)...")
+    print("正在获取交易所元数据...")
     meta_data = info.meta()
-    print("元数据获取成功！")
+    
+    print("目标币种下单精度 (szDecimals) 核对:")
+    for coin in TARGET_COINS:
+        asset_info = next((item for item in meta_data["universe"] if item["name"] == coin), None)
+        if asset_info:
+            print(f"  - {coin}: Size Decimals = {asset_info['szDecimals']}")
+        else:
+            print(f"  - {coin}: 未找到元数据！")
+    print("-------------------------------------------------------")
 
     try:
-        print(f"\n=======================================================")
-        print(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - 启动新一轮同步 -----")
-        
-        try:
-            print("正在获取最新数据...")
+        # 根据 DRY_RUN 模式决定执行路径
+        if DRY_RUN:
+            # --- 模拟模式 ---
+            print(f"\n=======================================================")
+            print(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - 启动模拟同步 -----")
             all_mids = info.all_mids()
             target_user_state = info.user_state(TARGET_USER_ADDRESS)
             my_user_state = info.user_state(my_address)
-        except Exception as e:
-            print(f"❌ 数据采集失败: {e}")
-            return # 模拟模式下，获取数据失败则直接退出
-
-        for coin in TARGET_COINS:
-            process_coin(exchange, info, all_mids, my_address, target_user_state, my_user_state, coin, meta_data)
-        
-        if DRY_RUN:
+            for coin in TARGET_COINS:
+                process_coin(exchange, info, all_mids, my_address, target_user_state, my_user_state, coin, meta_data)
             print(f"\n=======================================================")
-            print("✅ 模拟运行结束。请检查以上日志输出是否符合预期。")
-            print("   如果一切正常，请将脚本顶部的 'DRY_RUN' 变量修改为 False 以启动实盘交易。")
+            print("✅ 模拟运行结束。")
         else:
-            # 实盘模式下进入循环
+            # --- 实盘模式 ---
             while True:
+                print(f"\n=======================================================")
+                print(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - 启动新一轮同步 -----")
+                try:
+                    all_mids = info.all_mids()
+                    target_user_state = info.user_state(TARGET_USER_ADDRESS)
+                    my_user_state = info.user_state(my_address)
+                    for coin in TARGET_COINS:
+                        process_coin(exchange, info, all_mids, my_address, target_user_state, my_user_state, coin, meta_data)
+                except Exception as e:
+                    print(f"❌ 循环中发生错误: {e}，将在 {LOOP_SLEEP_SECONDS} 秒后重试。")
+                
                 print(f"\n=======================================================")
                 print(f"等待 {LOOP_SLEEP_SECONDS} 秒后进入下一轮...")
                 time.sleep(LOOP_SLEEP_SECONDS)
-                # ... (此处省略了实盘循环逻辑，因为与上面的单次运行逻辑重复)
-                # 完整的实盘机器人会在这里重复获取数据和处理的步骤
-                
+
     except KeyboardInterrupt:
         print("\n检测到手动中断 (Ctrl+C)，机器人正在关闭...")
     except Exception as e:
