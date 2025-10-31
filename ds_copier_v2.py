@@ -166,9 +166,6 @@ def main():
     except Exception as e:
         print(f"\n❌ 发生未知错误: {e}")
     finally:
-        print("关闭后台WebSocket连接...")
-        if 'info' in locals() and info.ws_manager:
-            info.ws_manager.close()
         print("程序已退出。")
 
 
