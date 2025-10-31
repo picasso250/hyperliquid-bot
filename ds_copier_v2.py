@@ -1,3 +1,25 @@
+# --- ⚠️ CRITICAL RISK WARNING - PLEASE READ BEFORE USE ⚠️ ---
+#
+# 1.  **关于保证金模式 (Margin Mode):**
+#     本脚本会使用您 Hyperliquid 账户的 **默认保证金模式**，通常是 **全仓模式 (Cross Margin)**。
+#     在全仓模式下，您账户中 **所有可用资金** 都会被用作所有持仓的保证金。
+#     这意味着，**一个仓位的巨大亏损可能会耗尽您的全部账户余额，导致所有仓位一同被强制平仓。**
+#     **强烈建议:** 请务必在一个 **资金隔离的专用账户** 中运行此机器人，并且账户中的资金应该是您完全可以接受损失的数额。
+#     **请勿** 在存有大量资金的主账户中直接运行本脚本！
+#
+# 2.  **关于跟单目标 (Target Trader Risk):**
+#     本脚本是一个忠实的执行者，它本身没有任何交易策略。您的盈亏完全取决于您所选择的跟单目标 (`TARGET_USER_ADDRESS`)。
+#     如果目标交易员亏损，您也会按比例亏损。请在实盘前充分研究并信任您的跟单目标。
+#
+# 3.  **关于跟单比例 (COPY_NOTIONAL_RATIO):**
+#     这是决定您风险敞口的最核心参数。它直接决定了您的仓位大小。在不完全理解其影响前，请务必从一个极小的值开始测试。
+#
+# 4.  **关于软件和网络风险 (Operational Risk):**
+#     任何程序都有中断的可能（如网络断开、服务器维护、电脑死机等）。这可能导致您的仓位处于无人管理的状态。
+#     本工具并非“一劳永逸”，您需要定期监控其运行状态和您在交易所的实际持仓。
+#
+# --- By running this script, you acknowledge these risks and take full responsibility for any financial outcomes. ---
+
 import time
 import json
 import math
@@ -189,9 +211,6 @@ def main():
     except Exception as e:
         print(f"\n❌ 发生未知错误: {e}")
     finally:
-        print("关闭后台WebSocket连接...")
-        if 'info' in locals() and info.ws_manager:
-            info.ws_manager.close()
         print("程序已退出。")
 
 
