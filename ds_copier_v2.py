@@ -121,7 +121,6 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
         
         try:
             leverage_msg = f"Updating {coin} leverage to {target_leverage}x (Isolated)"
-            # 关键修正: 明确指定 is_cross=False 来设置逐仓保证金
             execute_action(leverage_msg, exchange.update_leverage, target_leverage, coin, is_cross=False)
             
             order_msg = f"Market {'Buy' if target_direction_is_buy else 'Sell'} {rounded_my_target_szi_abs} {coin}"
@@ -131,13 +130,12 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
             logging.error(f"Failed to open position for {coin}: {e}", exc_info=True)
             
     else:
-        # 检查杠杆类型是否为逐仓
-        my_leverage_type_is_cross = my_position["leverage"]["cross"]
         my_direction_is_buy = float(my_position["szi"]) > 0
         my_leverage = int(my_position["leverage"]["value"])
         my_szi_abs = abs(float(my_position["szi"]))
 
-        if my_direction_is_buy == target_direction_is_buy and my_leverage == target_leverage and not my_leverage_type_is_cross:
+        # 关键修正: 移除对保证金模式的检查，因为API数据中不包含该字段，且脚本在开仓时已确保为逐仓。
+        if my_direction_is_buy == target_direction_is_buy and my_leverage == target_leverage:
             szi_diff = abs(my_szi_abs - rounded_my_target_szi_abs)
             szi_tolerance = rounded_my_target_szi_abs * SZI_TOLERANCE_RATIO
 
@@ -155,8 +153,6 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
                 policy_mismatches.append(f"direction (Me: {'Long' if my_direction_is_buy else 'Short'}, Target: {'Long' if target_direction_is_buy else 'Short'})")
             if my_leverage != target_leverage:
                 policy_mismatches.append(f"leverage (Me: {my_leverage}x, Target: {target_leverage}x)")
-            if my_leverage_type_is_cross:
-                policy_mismatches.append("margin type (Me: Cross, Target: Isolated)")
             
             logging.warning(f"{coin} position policy mismatch! Mismatches: {', '.join(policy_mismatches)}. Re-syncing.")
             action_msg = f"Closing {coin} to re-sync position policy."
