@@ -1,11 +1,10 @@
 # --- ⚠️ CRITICAL RISK WARNING - PLEASE READ BEFORE USE ⚠️ ---
 #
 # 1.  **关于保证金模式 (Margin Mode):**
-#     本脚本会使用您 Hyperliquid 账户的 **默认保证金模式**，通常是 **全仓模式 (Cross Margin)**。
-#     在全仓模式下，您账户中 **所有可用资金** 都会被用作所有持仓的保证金。
-#     这意味着，**一个仓位的巨大亏损可能会耗尽您的全部账户余额，导致所有仓位一同被强制平仓。**
-#     **强烈建议:** 请务必在一个 **资金隔离的专用账户** 中运行此机器人，并且账户中的资金应该是您完全可以接受损失的数额。
-#     **请勿** 在存有大量资金的主账户中直接运行本脚本！
+#     本脚本经过修正后，会为每个币种设置 **逐仓保证金 (Isolated Margin)** 模式，以模仿跟单目标的策略。
+#     在逐仓模式下，每个仓位的风险是相互隔离的。一个仓位的亏损和强平 **不会** 直接影响您账户中的其他资金或其他仓位。
+#     然而，这也意味着您必须独立监控每个仓位的保证金健康状况。
+#     **强烈建议:** 尽管风险被隔离，但仍建议在一个 **资金有限的专用账户** 中运行此机器人，账户中的资金应该是您完全可以接受损失的数额。
 #
 # 2.  **关于跟单目标 (Target Trader Risk):**
 #     本脚本是一个忠实的执行者，它本身没有任何交易策略。您的盈亏完全取决于您所选择的跟单目标 (`TARGET_USER_ADDRESS`)。
@@ -121,8 +120,9 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
         logging.info(f"  Calculated SZI: {my_target_szi_abs:.8f} -> Rounded to {sz_decimals} decimals: {rounded_my_target_szi_abs}")
         
         try:
-            leverage_msg = f"Updating {coin} leverage to {target_leverage}x"
-            execute_action(leverage_msg, exchange.update_leverage, target_leverage, coin)
+            leverage_msg = f"Updating {coin} leverage to {target_leverage}x (Isolated)"
+            # 关键修正: 明确指定 is_cross=False 来设置逐仓保证金
+            execute_action(leverage_msg, exchange.update_leverage, target_leverage, coin, is_cross=False)
             
             order_msg = f"Market {'Buy' if target_direction_is_buy else 'Sell'} {rounded_my_target_szi_abs} {coin}"
             order_result = execute_action(order_msg, exchange.market_open, coin, target_direction_is_buy, rounded_my_target_szi_abs, None, 0.01)
@@ -131,11 +131,13 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
             logging.error(f"Failed to open position for {coin}: {e}", exc_info=True)
             
     else:
+        # 检查杠杆类型是否为逐仓
+        my_leverage_type_is_cross = my_position["leverage"]["cross"]
         my_direction_is_buy = float(my_position["szi"]) > 0
         my_leverage = int(my_position["leverage"]["value"])
         my_szi_abs = abs(float(my_position["szi"]))
 
-        if my_direction_is_buy == target_direction_is_buy and my_leverage == target_leverage:
+        if my_direction_is_buy == target_direction_is_buy and my_leverage == target_leverage and not my_leverage_type_is_cross:
             szi_diff = abs(my_szi_abs - rounded_my_target_szi_abs)
             szi_tolerance = rounded_my_target_szi_abs * SZI_TOLERANCE_RATIO
 
@@ -148,8 +150,15 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
                 close_result = execute_action(action_msg, exchange.market_close, coin)
                 logging.info(f"Close result: {json.dumps(close_result)}")
         else:
-            logging.warning(f"{coin} position policy mismatch! (My: {'Long' if my_direction_is_buy else 'Short'} {my_leverage}x, "
-                  f"Target: {'Long' if target_direction_is_buy else 'Short'} {target_leverage}x). Re-syncing.")
+            policy_mismatches = []
+            if my_direction_is_buy != target_direction_is_buy:
+                policy_mismatches.append(f"direction (Me: {'Long' if my_direction_is_buy else 'Short'}, Target: {'Long' if target_direction_is_buy else 'Short'})")
+            if my_leverage != target_leverage:
+                policy_mismatches.append(f"leverage (Me: {my_leverage}x, Target: {target_leverage}x)")
+            if my_leverage_type_is_cross:
+                policy_mismatches.append("margin type (Me: Cross, Target: Isolated)")
+            
+            logging.warning(f"{coin} position policy mismatch! Mismatches: {', '.join(policy_mismatches)}. Re-syncing.")
             action_msg = f"Closing {coin} to re-sync position policy."
             close_result = execute_action(action_msg, exchange.market_close, coin)
             logging.info(f"Close result: {json.dumps(close_result)}")
