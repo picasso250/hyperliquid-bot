@@ -24,13 +24,11 @@ import time
 import json
 import math
 import logging
+import argparse
 import example_utils
 from hyperliquid.utils import constants
 
 # --- 核心配置参数 ---
-
-# ✨ 安全开关: 检查无误后，请手动改为 False 以启动实盘交易。
-DRY_RUN = True
 
 TARGET_USER_ADDRESS = "0xc20ac4dc4188660cbf555448af52694ca62b0734" # 您要跟单的目标地址 (DS)
 
@@ -46,6 +44,9 @@ SZI_TOLERANCE_RATIO = 0.05
 TARGET_COINS = ["XRP", "DOGE", "BTC", "ETH", "SOL", "BNB"]
 
 LOOP_SLEEP_SECONDS = 30
+
+# 全局变量，由命令行参数决定
+DRY_RUN = True
 
 def get_position_info(user_state, coin_name):
     """从完整的用户状态中，查找并返回指定币种的持仓详情，如果不存在则返回None"""
@@ -154,41 +155,46 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
             logging.info(f"Close result: {json.dumps(close_result)}")
 
 def main():
+    global DRY_RUN
+    
+    parser = argparse.ArgumentParser(description="A simple copy trading bot for Hyperliquid.")
+    parser.add_argument('--live', action='store_true', help='Run the bot in live trading mode. Default is dry run.')
+    args = parser.parse_args()
+
+    DRY_RUN = not args.live
+
     # --- Logging Setup ---
-    # Get the root logger
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    # Remove all existing handlers to avoid duplicates
     if logger.hasHandlers():
         logger.handlers.clear()
         
-    # Create file handler which logs even debug messages
     fh = logging.FileHandler('ds_copier.log', mode='a')
     fh.setLevel(logging.INFO)
     
-    # Create console handler with a higher log level
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     
-    # Create formatter and add it to the handlers
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
     
-    # Add the handlers to the logger
     logger.addHandler(fh)
     logger.addHandler(ch)
 
+    logging.info("--- DS Copier Bot V2 Initializing ---")
+    if DRY_RUN:
+        logging.warning("--- Bot is running in [DRY RUN] mode. No real trades will be executed. ---")
+        logging.warning("--- To run in live mode, use the --live flag: python ds_copier_v2.py --live ---")
+    else:
+        logging.critical("--- ‼️ BOT IS RUNNING IN [LIVE] MODE. REAL TRADES WILL BE EXECUTED. ‼️ ---")
+    
     try:
         my_address, info, exchange = example_utils.setup(base_url=constants.MAINNET_API_URL)
     except Exception as e:
         logging.error(f"Failed to setup connection: {e}", exc_info=True)
         return
-
-    logging.info("--- DS Copier Bot V2 Initializing ---")
-    if DRY_RUN:
-        logging.warning("--- Bot is running in DRY RUN mode. No real trades will be executed. ---")
     
     logging.info(f"My Account Address: {my_address}")
     logging.info(f"Target Account Address: {TARGET_USER_ADDRESS}")
