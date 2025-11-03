@@ -23,6 +23,7 @@
 import time
 import json
 import math
+import logging
 import example_utils
 from hyperliquid.utils import constants
 
@@ -58,24 +59,24 @@ def get_position_info(user_state, coin_name):
 def execute_action(action_msg, function, *args, **kwargs):
     """根据 DRY_RUN 模式决定是打印模拟操作还是真实执行"""
     if DRY_RUN:
-        print(f"【模拟操作】{action_msg}")
+        logging.info(f"[DRY RUN] {action_msg}")
         return {"status": "ok", "response": {"type": "dry_run", "data": "simulated success"}}
     else:
-        print(f"【实盘操作】{action_msg}")
+        logging.info(f"[LIVE] {action_msg}")
         return function(*args, **kwargs)
 
 def process_coin(exchange, info, all_mids, my_address, target_user_state, my_user_state, coin, meta_data):
     """处理单个币种的跟单逻辑"""
-    print(f"\n--- 正在处理 {coin} ---")
+    logging.info(f"--- Processing {coin} ---")
     
     mid_price = float(all_mids.get(coin, 0))
     if mid_price == 0:
-        print(f"❌ 警告: 无法获取 {coin} 的价格，跳过。")
+        logging.warning(f"Could not get mid price for {coin}, skipping.")
         return
 
     asset_info = next((item for item in meta_data["universe"] if item["name"] == coin), None)
     if not asset_info:
-        print(f"❌ 警告: 无法在元数据中找到 {coin} 的信息，跳过。")
+        logging.warning(f"Could not find metadata for {coin}, skipping.")
         return
     sz_decimals = asset_info["szDecimals"]
 
@@ -83,11 +84,11 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
     my_position = get_position_info(my_user_state, coin)
 
     if not target_position:
-        print(f"🟡 目标未持有 {coin} 仓位。")
+        logging.info(f"Target does not have a position in {coin}.")
         if my_position:
-            action_msg = f"平仓 {coin}"
+            action_msg = f"Closing {coin} position to match target."
             close_result = execute_action(action_msg, exchange.market_close, coin)
-            print(f"平仓结果: {json.dumps(close_result)}")
+            logging.info(f"Close result: {json.dumps(close_result)}")
         return
 
     target_direction_is_buy = float(target_position["szi"]) > 0
@@ -100,33 +101,33 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
     
     MIN_NOTIONAL_VALUE = 10 
     if my_target_notional_value < MIN_NOTIONAL_VALUE:
-        print(f"⚠️ 目标 {coin} 仓位按比例换算后价值 ${my_target_notional_value:,.2f}，低于最小开仓要求 ${MIN_NOTIONAL_VALUE}，跳过。")
+        logging.warning(f"Target {coin} position scaled value is ${my_target_notional_value:,.2f}, which is below the minimum of ${MIN_NOTIONAL_VALUE}. Skipping.")
         if my_position:
-            action_msg = f"平仓 {coin} (因目标仓位过小无法跟单)"
+            action_msg = f"Closing {coin} because target's scaled position is too small to copy."
             close_result = execute_action(action_msg, exchange.market_close, coin)
-            print(f"平仓结果: {json.dumps(close_result)}")
+            logging.info(f"Close result: {json.dumps(close_result)}")
         return
 
     rounded_my_target_szi_abs = round(my_target_szi_abs, sz_decimals)
     
     if rounded_my_target_szi_abs == 0:
-        print(f"⚠️ 计算出的 {coin} 仓位数量经四舍五入后为0 (原始值: {my_target_szi_abs})，无法开仓，跳过。")
+        logging.warning(f"Calculated {coin} position size is 0 after rounding (from: {my_target_szi_abs}). Cannot open position, skipping.")
         return
         
     if my_position is None:
-        print(f"✅ 发现目标持有 {coin} {'多单' if target_direction_is_buy else '空单'} ({target_leverage}x)。")
-        print(f"   目标价值: ${target_notional_value:,.2f}, 我方应开价值: ${my_target_notional_value:,.2f}")
-        print(f"   计算SZI: {my_target_szi_abs:.8f} -> 根据精度({sz_decimals}位小数)修正为 -> {rounded_my_target_szi_abs}")
+        logging.info(f"Target has {'Long' if target_direction_is_buy else 'Short'} {coin} ({target_leverage}x). We have no position. Opening new position.")
+        logging.info(f"  Target Notional: ${target_notional_value:,.2f}, My Target Notional: ${my_target_notional_value:,.2f}")
+        logging.info(f"  Calculated SZI: {my_target_szi_abs:.8f} -> Rounded to {sz_decimals} decimals: {rounded_my_target_szi_abs}")
         
         try:
-            leverage_msg = f"更新 {coin} 杠杆为 {target_leverage}x"
+            leverage_msg = f"Updating {coin} leverage to {target_leverage}x"
             execute_action(leverage_msg, exchange.update_leverage, target_leverage, coin)
             
-            order_msg = f"市价 {'开多' if target_direction_is_buy else '开空'} {rounded_my_target_szi_abs} {coin}"
+            order_msg = f"Market {'Buy' if target_direction_is_buy else 'Sell'} {rounded_my_target_szi_abs} {coin}"
             order_result = execute_action(order_msg, exchange.market_open, coin, target_direction_is_buy, rounded_my_target_szi_abs, None, 0.01)
-            print(f"开仓结果: {json.dumps(order_result)}")
+            logging.info(f"Open result: {json.dumps(order_result)}")
         except Exception as e:
-            print(f"❌ 操作失败: {e}")
+            logging.error(f"Failed to open position for {coin}: {e}", exc_info=True)
             
     else:
         my_direction_is_buy = float(my_position["szi"]) > 0
@@ -139,60 +140,88 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
 
             if szi_diff <= szi_tolerance:
                 my_position_value = my_szi_abs * mid_price
-                print(f"🟢 {coin} 持仓正常，与目标一致。我方价值: ${my_position_value:,.2f}")
+                logging.info(f"{coin} position is in sync with target. My notional value: ${my_position_value:,.2f}")
             else:
-                print(f"❗️ {coin} 仓位大小不一致！(我: {my_szi_abs:.5f}, 目标应为: {rounded_my_target_szi_abs:.5f})")
-                action_msg = f"平仓 {coin} 以同步仓位大小"
+                logging.warning(f"{coin} position size mismatch! (My: {my_szi_abs:.5f}, Target should be: {rounded_my_target_szi_abs:.5f}). Re-syncing.")
+                action_msg = f"Closing {coin} to re-sync position size."
                 close_result = execute_action(action_msg, exchange.market_close, coin)
-                print(f"平仓结果: {json.dumps(close_result)}")
+                logging.info(f"Close result: {json.dumps(close_result)}")
         else:
-            print(f"❗️ {coin} 策略不一致！(我: {'多' if my_direction_is_buy else '空'}{my_leverage}x, "
-                  f"目标: {'多' if target_direction_is_buy else '空'}{target_leverage}x)")
-            action_msg = f"平仓 {coin} 以同步策略"
+            logging.warning(f"{coin} position policy mismatch! (My: {'Long' if my_direction_is_buy else 'Short'} {my_leverage}x, "
+                  f"Target: {'Long' if target_direction_is_buy else 'Short'} {target_leverage}x). Re-syncing.")
+            action_msg = f"Closing {coin} to re-sync position policy."
             close_result = execute_action(action_msg, exchange.market_close, coin)
-            print(f"平仓结果: {json.dumps(close_result)}")
+            logging.info(f"Close result: {json.dumps(close_result)}")
 
 def main():
-    my_address, info, exchange = example_utils.setup(base_url=constants.MAINNET_API_URL)
-    print("--- DS 完全跟单机器人 V2 ---")
-    if DRY_RUN:
-        print("\n⚠️  警告: 当前处于【模拟运行】模式，不会执行任何真实交易。 ⚠️\n")
-    print(f"我的账户地址: {my_address}")
-    print(f"跟单目标地址: {TARGET_USER_ADDRESS}")
-    print(f"策略: 跟随目标 {TARGET_COINS} 的所有仓位，按目标 {COPY_NOTIONAL_RATIO*100:.4f}% 的规模开仓。")
-    print(f"同步容忍度: {SZI_TOLERANCE_RATIO*100}%")
-    print("-------------------------------------------------------")
+    # --- Logging Setup ---
+    # Get the root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
     
-    print("正在获取交易所元数据...")
-    meta_data = info.meta()
+    # Remove all existing handlers to avoid duplicates
+    if logger.hasHandlers():
+        logger.handlers.clear()
+        
+    # Create file handler which logs even debug messages
+    fh = logging.FileHandler('ds_copier.log', mode='a')
+    fh.setLevel(logging.INFO)
     
-    print("目标币种下单精度 (szDecimals) 核对:")
-    for coin in TARGET_COINS:
-        asset_info = next((item for item in meta_data["universe"] if item["name"] == coin), None)
-        if asset_info:
-            print(f"  - {coin}: Size Decimals = {asset_info['szDecimals']}")
-        else:
-            print(f"  - {coin}: 未找到元数据！")
-    print("-------------------------------------------------------")
+    # Create console handler with a higher log level
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    
+    # Create formatter and add it to the handlers
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    
+    # Add the handlers to the logger
+    logger.addHandler(fh)
+    logger.addHandler(ch)
 
     try:
-        # 根据 DRY_RUN 模式决定执行路径
+        my_address, info, exchange = example_utils.setup(base_url=constants.MAINNET_API_URL)
+    except Exception as e:
+        logging.error(f"Failed to setup connection: {e}", exc_info=True)
+        return
+
+    logging.info("--- DS Copier Bot V2 Initializing ---")
+    if DRY_RUN:
+        logging.warning("--- Bot is running in DRY RUN mode. No real trades will be executed. ---")
+    
+    logging.info(f"My Account Address: {my_address}")
+    logging.info(f"Target Account Address: {TARGET_USER_ADDRESS}")
+    logging.info(f"Copy Ratio: {COPY_NOTIONAL_RATIO*100:.4f}% of target's notional value.")
+    logging.info(f"SZI Tolerance: {SZI_TOLERANCE_RATIO*100}%")
+    logging.info(f"Monitored Coins: {TARGET_COINS}")
+    
+    try:
+        logging.info("Fetching exchange metadata...")
+        meta_data = info.meta()
+        logging.info("Target coin size decimals (szDecimals) check:")
+        for coin in TARGET_COINS:
+            asset_info = next((item for item in meta_data["universe"] if item["name"] == coin), None)
+            if asset_info:
+                logging.info(f"  - {coin}: {asset_info['szDecimals']} decimals")
+            else:
+                logging.warning(f"  - {coin}: Could not find metadata!")
+    except Exception as e:
+        logging.error(f"Failed to fetch metadata: {e}", exc_info=True)
+        return
+
+    try:
         if DRY_RUN:
-            # --- 模拟模式 ---
-            print(f"\n=======================================================")
-            print(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - 启动模拟同步 -----")
+            logging.info(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - Starting single simulation run -----")
             all_mids = info.all_mids()
             target_user_state = info.user_state(TARGET_USER_ADDRESS)
             my_user_state = info.user_state(my_address)
             for coin in TARGET_COINS:
                 process_coin(exchange, info, all_mids, my_address, target_user_state, my_user_state, coin, meta_data)
-            print(f"\n=======================================================")
-            print("✅ 模拟运行结束。")
+            logging.info("----- Simulation run finished. -----")
         else:
-            # --- 实盘模式 ---
             while True:
-                print(f"\n=======================================================")
-                print(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - 启动新一轮同步 -----")
+                logging.info(f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} - Starting new synchronization cycle -----")
                 try:
                     all_mids = info.all_mids()
                     target_user_state = info.user_state(TARGET_USER_ADDRESS)
@@ -200,18 +229,17 @@ def main():
                     for coin in TARGET_COINS:
                         process_coin(exchange, info, all_mids, my_address, target_user_state, my_user_state, coin, meta_data)
                 except Exception as e:
-                    print(f"❌ 循环中发生错误: {e}，将在 {LOOP_SLEEP_SECONDS} 秒后重试。")
+                    logging.error(f"An error occurred during the sync cycle: {e}", exc_info=True)
                 
-                print(f"\n=======================================================")
-                print(f"等待 {LOOP_SLEEP_SECONDS} 秒后进入下一轮...")
+                logging.info(f"Cycle finished. Waiting for {LOOP_SLEEP_SECONDS} seconds...")
                 time.sleep(LOOP_SLEEP_SECONDS)
 
     except KeyboardInterrupt:
-        print("\n检测到手动中断 (Ctrl+C)，机器人正在关闭...")
+        logging.info("KeyboardInterrupt detected. Shutting down bot.")
     except Exception as e:
-        print(f"\n❌ 发生未知错误: {e}")
+        logging.error(f"An unexpected critical error occurred: {e}", exc_info=True)
     finally:
-        print("程序已退出。")
+        logging.info("--- Bot has been terminated. ---")
 
 
 if __name__ == "__main__":
