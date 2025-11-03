@@ -32,9 +32,9 @@ from hyperliquid.utils import constants
 TARGET_USER_ADDRESS = "0xc20ac4dc4188660cbf555448af52694ca62b0734" # 您要跟单的目标地址 (DS)
 
 # 我方仓位名义价值将是目标名义价值的该比例。
-# 基于目标最小仓位 (XRP, ~$8.9k) 和我方最小开仓名义价值 ($10) 计算：
-# 10 / 8900 ≈ 0.00112。为增加缓冲，设定为 0.0014
-COPY_NOTIONAL_RATIO = 0.0014
+# 基于目标当前最小仓位 (BNB, ~$6.62k) 和我方最小开仓名义价值 ($10) 计算：
+# 10 / 6620 ≈ 0.00151。为增加缓冲，设定为 0.0018
+COPY_NOTIONAL_RATIO = 0.0018
 
 # 仓位 SZI 大小同步的容忍度。
 SZI_TOLERANCE_RATIO = 0.05
@@ -134,7 +134,6 @@ def process_coin(exchange, info, all_mids, my_address, target_user_state, my_use
         my_leverage = int(my_position["leverage"]["value"])
         my_szi_abs = abs(float(my_position["szi"]))
 
-        # 关键修正: 移除对保证金模式的检查，因为API数据中不包含该字段，且脚本在开仓时已确保为逐仓。
         if my_direction_is_buy == target_direction_is_buy and my_leverage == target_leverage:
             szi_diff = abs(my_szi_abs - rounded_my_target_szi_abs)
             szi_tolerance = rounded_my_target_szi_abs * SZI_TOLERANCE_RATIO
